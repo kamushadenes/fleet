@@ -1699,7 +1699,7 @@ func isDuplicateInHouseApp(sw fleet.SoftwareTitleListResult, seen map[string]str
 // It also returns SoftwarePackageResponse/VPPAppResponse slices with title IDs
 // for policy title ID resolution in doGitOpsPolicies.
 func generateSoftwareForValidation(client generateGitopsClient, appConfig *fleet.EnrichedAppConfig, teamID uint) (
-	softwareSpec map[string]interface{},
+	softwareSpec map[string]any,
 	installers []fleet.SoftwarePackageResponse,
 	vppApps []fleet.VPPAppResponse,
 	err error,
@@ -1725,7 +1725,7 @@ func generateSoftwareForValidation(client generateGitopsClient, appConfig *fleet
 			continue
 		}
 
-		spec := make(map[string]interface{})
+		spec := make(map[string]any)
 		titleID := sw.ID
 
 		switch {
