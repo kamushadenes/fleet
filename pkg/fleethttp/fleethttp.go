@@ -3,7 +3,6 @@
 package fleethttp
 
 import (
-	"context"
 	"crypto/tls"
 	"errors"
 	"fmt"
@@ -128,15 +127,47 @@ func noFollowRedirect(*http.Request, []*http.Request) error {
 // token for authentication (as OAuth2 static token).
 func NewGithubClient() *http.Client {
 	if githubToken := os.Getenv("NETWORK_TEST_GITHUB_TOKEN"); githubToken != "" {
-		cli := oauth2.NewClient(context.Background(), oauth2.StaticTokenSource(
-			&oauth2.Token{
-				AccessToken: githubToken,
-			},
-		))
-		cli.Transport = otelhttp.NewTransport(cli.Transport)
-		return cli
+		return NewGithubClientWithToken(githubToken)
 	}
 	return NewClient()
+}
+
+// NewGithubClientWithToken returns an HTTP client that authenticates to GitHub
+// using the provided token (as an OAuth2 static token). All ClientOpts
+// (WithTimeout, WithTLSClientConfig, WithFollowRedir, WithCookieJar) are
+// applied to the returned client.
+func NewGithubClientWithToken(token string, opts ...ClientOpt) *http.Client {
+	var co clientOpts
+	for _, opt := range opts {
+		opt(&co)
+	}
+
+	tokenSource := oauth2.StaticTokenSource(
+		&oauth2.Token{AccessToken: token},
+	)
+
+	var baseTransport http.RoundTripper
+	if co.tlsConf != nil {
+		baseTransport = NewTransport(WithTLSConfig(co.tlsConf))
+	}
+
+	oauthTransport := &oauth2.Transport{
+		Source: tokenSource,
+		Base:   baseTransport,
+	}
+
+	//nolint:gocritic
+	cli := &http.Client{
+		Transport: otelhttp.NewTransport(oauthTransport),
+		Timeout:   co.timeout,
+	}
+	if co.noFollow {
+		cli.CheckRedirect = noFollowRedirect
+	}
+	if co.cookieJar != nil {
+		cli.Jar = co.cookieJar
+	}
+	return cli
 }
 
 // HostnamesMatch is an utility function to parse two strings as

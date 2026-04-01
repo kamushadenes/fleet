@@ -3,6 +3,7 @@ package fleethttp
 import (
 	"crypto/tls"
 	"net/http"
+	"net/http/cookiejar"
 	"reflect"
 	"testing"
 	"time"
@@ -11,6 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+	"golang.org/x/oauth2"
 )
 
 func TestClient(t *testing.T) {
@@ -74,6 +76,62 @@ func TestTransport(t *testing.T) {
 			}
 			assert.NotNil(t, tr.Proxy)
 			assert.NotNil(t, tr.DialContext)
+		})
+	}
+}
+
+func TestNewGithubClientWithToken(t *testing.T) {
+	jar, err := cookiejar.New(nil)
+	require.NoError(t, err)
+
+	cases := []struct {
+		name        string
+		token       string
+		opts        []ClientOpt
+		timeout     time.Duration
+		nilRedirect bool
+		customTLS   bool
+		cookieJar   http.CookieJar
+	}{
+		{"token only", "test-token", nil, 0, true, false, nil},
+		{"token with timeout", "test-token", []ClientOpt{WithTimeout(5 * time.Second)}, 5 * time.Second, true, false, nil},
+		{"token with nofollow", "test-token", []ClientOpt{WithFollowRedir(false)}, 0, false, false, nil},
+		{"token with tls", "test-token", []ClientOpt{WithTLSClientConfig(&tls.Config{})}, 0, true, true, nil},
+		{"token with cookie jar", "test-token", []ClientOpt{WithCookieJar(jar)}, 0, true, false, jar},
+		{"token combined", "test-token", []ClientOpt{
+			WithTimeout(3 * time.Second),
+			WithFollowRedir(false),
+			WithTLSClientConfig(&tls.Config{}),
+		}, 3 * time.Second, false, true, nil},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			cli := NewGithubClientWithToken(c.token, c.opts...)
+
+			require.IsType(t, &otelhttp.Transport{}, cli.Transport, "outer transport should be otelhttp")
+
+			rtField := reflect.ValueOf(cli.Transport).Elem().FieldByName("rt")
+			inner := *(*http.RoundTripper)(unsafe.Pointer(rtField.UnsafeAddr())) //nolint:gosec
+			assert.IsType(t, &oauth2.Transport{}, inner, "inner transport should be oauth2.Transport")
+
+			assert.Equal(t, c.timeout, cli.Timeout)
+
+			if c.nilRedirect {
+				assert.Nil(t, cli.CheckRedirect)
+			} else {
+				assert.NotNil(t, cli.CheckRedirect)
+			}
+
+			if c.customTLS {
+				oauthTr := inner.(*oauth2.Transport)
+				assert.IsType(t, &http.Transport{}, oauthTr.Base, "base transport should be custom *http.Transport for TLS") //nolint:gocritic
+			}
+
+			if c.cookieJar != nil {
+				assert.Equal(t, c.cookieJar, cli.Jar)
+			} else {
+				assert.Nil(t, cli.Jar)
+			}
 		})
 	}
 }
